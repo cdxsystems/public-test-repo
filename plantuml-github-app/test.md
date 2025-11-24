@@ -20,10 +20,10 @@ The image below is pulled from ../puml/github-app-auth-flow.puml
 
 ![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.github.com/cdxsystems/public-test-repo/main/puml/puml/github-app-auth-flow.puml)
 
-`![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.github.com/cdxsystems/public-test-repo/main/puml/puml/github-app-auth-flow.puml)`
+`![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.github.com/cdxsystems/public-test-repo/main/puml/github-app-auth-flow.puml)`
 
 ## this repo via raw.githubusercontent.com
 
 ![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.githubusercontent.com/cdxsystems/public-test-repo/main/puml/puml/github-app-auth-flow.puml)
 
-`![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.githubusercontent.com/cdxsystems/public-test-repo/main/puml/puml/github-app-auth-flow.puml)`
+`![plantuml test image](http://cgxhbnr1bwwk.y2r4c3lzdgvtcy5jb20k.com/proxy?cache=no&src=https://raw.githubusercontent.com/cdxsystems/public-test-repo/main/puml/github-app-auth-flow.puml)`
