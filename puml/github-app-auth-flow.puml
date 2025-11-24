@@ -1,0 +1,398 @@
+@startuml GitHub App Authentication Flow
+
+title GitHub App Authentication Flow
+
+skinparam backgroundColor #FFFFFF
+skinparam sequenceMessageAlign center
+skinparam boxPadding 10
+
+actor User
+participant "GitHub\nPlatform" as GitHub
+participant "App\nServer" as App
+participant "GitHub\nAPI" as API
+database "Token\nCache" as Cache
+
+== Installation Flow ==
+
+User -> GitHub: Install GitHub App
+activate GitHub
+GitHub -> User: Select repositories
+User -> GitHub: Confirm installation
+GitHub -> App: POST /webhooks\ninstallation.created event
+activate App
+App -> App: Store installation_id\nand repository info
+App --> GitHub: 200 OK
+deactivate App
+deactivate GitHub
+
+== Authentication Flow ==
+
+group Step 1: Generate JWT (Valid 10 minutes)
+    App -> App: Create JWT payload
+    note right
+        {
+          "iat": current_timestamp,
+          "exp": current_timestamp + 600,
+          "iss": "app_id"
+        }
+    end note
+    App -> App: Sign with private key\n(RS256 algorithm)
+end
+
+group Step 2: Exchange JWT for Installation Token
+    App -> API: POST /app/installations/{id}/access_tokens
+    note right
+        Headers:
+        Authorization: Bearer {JWT}
+        Accept: application/vnd.github+json
+    end note
+    activate API
+    API -> API: Verify JWT signature
+    API -> API: Validate app_id
+    API -> API: Check installation permissions
+    API --> App: Installation access token\n(valid 1 hour)
+    deactivate API
+    App -> Cache: Store token with expiry
+end
+
+group Step 3: Make API Calls
+    App -> API: API Request
+    note right
+        Headers:
+        Authorization: token {installation_token}
+        Accept: application/vnd.github+json
+    end note
+    activate API
+    API -> API: Validate token
+    API -> API: Check permissions
+    API --> App: API Response (200 OK)
+    deactivate API
+end
+
+== Webhook Event Flow ==
+
+GitHub -> App: POST /webhooks\npull_request.opened event
+note right
+    Headers:
+    X-Hub-Signature-256: sha256=...
+    X-GitHub-Event: pull_request
+    X-GitHub-Delivery: uuid
+end note
+activate App
+
+App -> App: Verify webhook signature
+note right
+    HMAC-SHA256(webhook_secret, payload)
+    Compare with X-Hub-Signature-256 header
+end note
+
+alt Signature Valid
+    App -> App: Check token cache
+    alt Token Expired or Missing
+        App -> App: Generate new JWT
+        App -> API: Get installation token
+        activate API
+        API --> App: New token
+        deactivate API
+        App -> Cache: Update cache
+    end
+
+    App -> API: Create check run
+    activate API
+    note right
+        POST /repos/{owner}/{repo}/check-runs
+        {
+          "name": "CI Bot",
+          "head_sha": "abc123",
+          "status": "in_progress"
+        }
+    end note
+    API --> App: Check run created
+    deactivate API
+
+    App -> App: Process pull request\n(run tests, etc.)
+
+    App -> API: Update check run
+    activate API
+    note right
+        PATCH /repos/{owner}/{repo}/check-runs/{id}
+        {
+          "status": "completed",
+          "conclusion": "success"
+        }
+    end note
+    API --> App: Check run updated
+    deactivate API
+
+    App --> GitHub: 200 OK
+else Signature Invalid
+    App --> GitHub: 401 Unauthorized
+    note right
+        Invalid signature
+        Request rejected
+    end note
+end
+
+deactivate App
+
+@enduml
+
+@startuml GitHub App Authentication State Machine
+
+title GitHub App Authentication States
+
+skinparam backgroundColor #FFFFFF
+
+[*] --> AppRegistered : Create GitHub App\n(obtain app_id, private_key)
+
+AppRegistered --> Installed : User installs app\n(receive installation_id)
+
+state Installed {
+    [*] --> NoToken
+    NoToken --> GeneratingJWT : Need to make API call
+    GeneratingJWT --> JWTValid : JWT signed with private key\n(valid 10 minutes)
+    JWTValid --> RequestingToken : Exchange JWT for\ninstallation token
+    RequestingToken --> TokenValid : Receive installation token\n(valid 1 hour)
+    TokenValid --> MakingAPICall : Use token for API requests
+    MakingAPICall --> TokenValid : Token still valid
+    MakingAPICall --> GeneratingJWT : Token expired (1 hour)
+    JWTValid --> GeneratingJWT : JWT expired (10 minutes)
+}
+
+Installed --> [*] : App uninstalled
+
+note right of GeneratingJWT
+    JWT Payload:
+    - iat: issued at timestamp
+    - exp: expiration timestamp
+    - iss: GitHub App ID
+
+    Signed with RS256
+end note
+
+note right of TokenValid
+    Installation Token:
+    - Scoped to installation
+    - Limited permissions
+    - 5000 req/hr rate limit
+    - Auto-expires after 1 hour
+end note
+
+@enduml
+
+@startuml GitHub App Security Flow
+
+title GitHub App Security & Permission Flow
+
+skinparam backgroundColor #FFFFFF
+
+start
+
+:Receive Request;
+
+if (Request Type?) then (Webhook)
+    :Extract X-Hub-Signature-256 header;
+    :Calculate HMAC-SHA256(webhook_secret, payload);
+
+    if (Signature Match?) then (yes)
+        #LightGreen:Webhook Verified;
+    else (no)
+        #Salmon:Reject with 401;
+        stop
+    endif
+
+else (API Call)
+    :Extract Authorization header;
+
+    if (Token Present?) then (no)
+        #Salmon:Reject with 401;
+        stop
+    else (yes)
+    endif
+endif
+
+:Check Token Cache;
+
+if (Token Valid?) then (yes)
+    #LightGreen:Use Cached Token;
+else (no)
+    :Generate JWT;
+    note right
+        Sign with private key
+        Max 10 minute lifetime
+    end note
+
+    :Request Installation Token;
+
+    if (Token Obtained?) then (yes)
+        #LightGreen:Cache Token (1 hour TTL);
+    else (no)
+        #Salmon:Reject with 403;
+        stop
+    endif
+endif
+
+:Make GitHub API Request;
+
+if (Permission Granted?) then (yes)
+    #LightGreen:Execute Action;
+
+    if (Within Rate Limit?) then (yes)
+        :Process Request;
+        :Return Response;
+        #PaleGreen:Success (200 OK);
+    else (no)
+        #Orange:Return 429 Too Many Requests;
+    endif
+else (no)
+    #Salmon:Reject with 403 Forbidden;
+    stop
+endif
+
+stop
+
+@enduml
+
+@startuml GitHub App Architecture
+
+title GitHub App Architecture & Components
+
+skinparam backgroundColor #FFFFFF
+skinparam componentStyle rectangle
+
+package "GitHub Platform" {
+    component [GitHub API] as API
+    component [Webhook Service] as Webhook
+    database "Repository Data" as Repo
+}
+
+package "GitHub App Server" {
+    component [Webhook Handler] as Handler
+    component [JWT Generator] as JWT
+    component [Token Manager] as TokenMgr
+    component [API Client] as Client
+    component [Business Logic] as Logic
+
+    database "Token Cache\n(Redis/Memory)" as Cache
+    database "App Configuration" as Config
+}
+
+cloud "Installation 1\n(Org A)" as I1
+cloud "Installation 2\n(User B)" as I2
+cloud "Installation 3\n(Org C)" as I3
+
+Config --> JWT : app_id\nprivate_key
+JWT --> TokenMgr : JWT\n(10 min)
+TokenMgr --> API : Exchange JWT
+API --> TokenMgr : Installation Token\n(1 hour)
+TokenMgr --> Cache : Store token
+Cache --> Client : Retrieve token
+Client --> API : API Requests\nwith token
+
+Webhook --> Handler : Events\n+ signature
+Handler --> TokenMgr : Request token
+Handler --> Logic : Process event
+Logic --> Client : Make API calls
+
+I1 --> API : 5000 req/hr
+I2 --> API : 5000 req/hr
+I3 --> API : 5000 req/hr
+
+API --> Repo : Read/Write\n(per permissions)
+
+note right of Config
+    **Configuration**
+    - App ID
+    - Private Key (RSA)
+    - Webhook Secret
+    - Webhook URL
+end note
+
+note right of Cache
+    **Token Cache Entry**
+    {
+      "installation_id": 123,
+      "token": "ghs_...",
+      "expires_at": timestamp
+    }
+end note
+
+note bottom of API
+    **Rate Limits**
+    - 5000 requests/hour per installation
+    - Independent limits per installation
+    - Resets every hour
+end note
+
+@enduml
+
+@startuml GitHub App Permission Model
+
+title GitHub App Permission Model
+
+skinparam backgroundColor #FFFFFF
+
+object "GitHub App" as App {
+    app_id = 123456
+    name = "CI Bot"
+}
+
+object "Requested Permissions" as Perms {
+    contents = read/write
+    pull_requests = write
+    checks = write
+    issues = read
+    metadata = read
+}
+
+object "Installation (Org A)" as I1 {
+    installation_id = 111
+    account = "org-a"
+    selected_repos = [repo1, repo2]
+}
+
+object "Installation (User B)" as I2 {
+    installation_id = 222
+    account = "user-b"
+    selected_repos = [repo3]
+}
+
+object "Installation Token 1" as T1 {
+    token = "ghs_abc123..."
+    expires_at = "2025-10-15T10:00:00Z"
+    permissions = granted_perms
+    repositories = [repo1, repo2]
+}
+
+object "Installation Token 2" as T2 {
+    token = "ghs_xyz789..."
+    expires_at = "2025-10-15T11:00:00Z"
+    permissions = granted_perms
+    repositories = [repo3]
+}
+
+App --> Perms : defines
+App --> I1 : installed on
+App --> I2 : installed on
+I1 --> T1 : generates
+I2 --> T2 : generates
+Perms --> T1 : scope limits
+Perms --> T2 : scope limits
+
+note right of T1
+    Token is scoped to:
+    - Specific installation
+    - Selected repositories only
+    - Granted permissions only
+    - 1 hour lifetime
+end note
+
+note bottom of App
+    **Permission Levels**
+    - No access
+    - Read
+    - Write
+    - Admin
+end note
+
+@enduml
