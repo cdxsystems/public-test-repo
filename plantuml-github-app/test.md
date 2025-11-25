@@ -1,3 +1,7 @@
+
+## Description
+This page is the test page to validate the rendering capability of the PlantUML GitHub App.
+
 The below flows for rendering with the plantuml github app are as follows:
 
 `GitHub Camo → wrapper (/proxy) → GitHub raw/API → PlantUML (/png) → wrapper → Camo → browser`
